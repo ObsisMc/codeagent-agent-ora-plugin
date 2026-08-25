@@ -14,7 +14,7 @@ import { startCodeAgent, stopCodeAgent } from "./handlers/lifecycle.ts";
 import { listCodeAgentModels } from "./handlers/models.ts";
 import { CodeAgentClient } from "./services/codeagent-client.ts";
 
-/** Must match `name` in orax.toml, which is also this agent's identity inside Ora. */
+/** Must match `ora.id` in package.json, which is also this agent's identity inside Ora. */
 const PLUGIN_ID = "ora-space.codeagent";
 
 /**

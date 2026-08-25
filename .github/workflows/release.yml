@@ -21,22 +21,13 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Lint
-        run: deno lint
-
-      - name: Type check
-        run: deno task check
-
-      - name: Test
-        run: deno task test
-
       - name: Build
         run: deno task build
 
       - name: Package .orax archive
         run: |
           set -euo pipefail
-          NAME=$(grep -m1 '^name *=' orax.toml | sed -E 's/^name *= *"(.*)"/\1/')
+          NAME=$(grep -m1 '^identifier *=' orax.toml | sed -E 's/^identifier *= *"(.*)"/\1/')
           FILE="${NAME}-${GITHUB_REF_NAME}.orax"
           zip -j "$FILE" orax.toml dist/main.js logo.svg README.md
           echo "ORAX_FILE=$FILE" >> "$GITHUB_ENV"

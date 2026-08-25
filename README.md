@@ -88,9 +88,9 @@ handler modules onto it.
 ## Layout
 
 ```
-orax.toml                    Ora manifest (kind = "agent")
+package.json                 Ora plugin manifest (ora.id, engines, contributes)
+orax.toml                    packaging metadata read by the release workflow
 deno.json                    developer tasks and the import map
-scripts/build.ts             bundles src/main.ts into dist/main.js
 src/
   main.ts                    entrypoint: mounts handlers onto the base class
   base/agent-plugin.ts       AgentPlugin base class + dispatch + runAgentPlugin
@@ -138,8 +138,11 @@ deno task check      # type check
 deno task test       # unit tests, no CLI required
 deno task simulate   # full host handshake against a real CodeAgent CLI
 deno task build      # bundle to dist/main.js
-deno task pack       # build, validate, and produce the .orax package
 ```
+
+Tagging `v*` builds that bundle and publishes `ora-space.codeagent-<tag>.orax` —
+a flat zip of `orax.toml`, `dist/main.js`, `logo.svg`, and `README.md` — to a
+GitHub release.
 
 `deno task simulate` speaks Ora's binary frame protocol to a freshly launched
 plugin process:
@@ -167,8 +170,11 @@ plugin exited with code 0
   stalled connection; the contract has no `agent/exited` notification yet.
 - Killing the CLI on `agent/stop` is best effort; Ora retains process-tree
   reaping.
-- `orax.toml` declares no permissions. The model in `ora-space/specs`
-  (`permissions.process`) is not the schema orax accepts today, and orax rejects
+- Neither manifest declares permissions. The plugin needs `--allow-run` to spawn
+  the CLI, `--allow-read`/`--allow-env` to resolve it (PATH and
+  `ORA_CODEAGENT_BIN`), and `--allow-net` for the CLI's providers, but it relies
+  on the flags Ora grants agent plugins today: the model in `ora-space/specs`
+  (`permissions.process`) is not the schema orax accepts, and orax rejects
   unknown fields, so the declaration waits for the host to ship it.
 
 ## License
