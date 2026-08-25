@@ -1,0 +1,21 @@
+# Plugin metadata. Validated by `orax validate` before publication.
+resolver = 1
+name = "ora-space.codeagent"
+namespace = "official"
+kind = "agent"
+version = "0.1.0"
+description = "Ora agent plugin that runs CodeAgent as an ACP agent."
+homepage = "https://github.com/ora-space/codeagent-agent"
+license = "Apache-2.0"
+
+# Host compatibility, resolved with semver by `orax`.
+# [dependencies]
+# ora = ">= 0.8.0"
+
+# This plugin spawns the CodeAgent CLI it fronts, so it needs the launch flags Ora grants agent
+# plugins today: --allow-run to spawn it, --allow-read and --allow-env to resolve it (PATH and
+# ORA_CODEAGENT_BIN), and --allow-net so the CLI can reach its model providers.
+#
+# Those are not declared here yet: the manifest permission model in ora-space/specs
+# (permissions.process, permissions.process.sandbox) is not what orax accepts today, and orax
+# rejects unknown fields rather than ignoring them. Declare them once the host ships that schema.

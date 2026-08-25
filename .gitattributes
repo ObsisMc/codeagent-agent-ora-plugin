@@ -1,0 +1,4 @@
+# `deno fmt` writes LF, and the release workflow runs `deno lint` on Ubuntu. Without this a
+# Windows clone under core.autocrlf=true checks out CRLF and every formatted file reads as
+# modified, so pin the working copy to LF on every platform.
+* text=auto eol=lf
