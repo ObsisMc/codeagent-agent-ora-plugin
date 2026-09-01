@@ -140,9 +140,12 @@ deno task simulate   # full host handshake against a real CodeAgent CLI
 deno task build      # bundle to dist/main.js
 ```
 
-Tagging `v*` builds that bundle and publishes `ora-space.codeagent-<tag>.orax` —
-a flat zip of `orax.toml`, `dist/main.js`, `logo.svg`, and `README.md` — to a
-GitHub release.
+Tagging `v*` builds that bundle and publishes two release assets:
+
+- `ora-space.codeagent-<tag>.orax`, a universal flat zip of `orax.toml`,
+  `dist/main.js`, `logo.svg`, and `README.md`.
+- `manifest.toml`, the marketplace form of `orax.toml`, with top-level `url`
+  and `sha256` fields pointing to and verifying that universal archive.
 
 `deno task simulate` speaks Ora's binary frame protocol to a freshly launched
 plugin process:

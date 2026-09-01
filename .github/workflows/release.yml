@@ -24,12 +24,18 @@ jobs:
       - name: Build
         run: deno task build
 
-      - name: Package .orax archive
+      - name: Package
         run: |
           set -euo pipefail
           NAME=$(grep -m1 '^identifier *=' orax.toml | sed -E 's/^identifier *= *"(.*)"/\1/')
           FILE="${NAME}-${GITHUB_REF_NAME}.orax"
           zip -j "$FILE" orax.toml dist/main.js logo.svg README.md
+          SHA256=$(sha256sum "$FILE" | awk '{print $1}')
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${FILE}"
+          {
+            printf 'url = "%s"\nsha256 = "%s"\n\n' "$URL" "$SHA256"
+            cat orax.toml
+          } > manifest.toml
           echo "ORAX_FILE=$FILE" >> "$GITHUB_ENV"
 
       - name: Create Release
@@ -37,6 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" "${ORAX_FILE}" \
+          gh release create "${GITHUB_REF_NAME}" \
+            "${ORAX_FILE}" manifest.toml \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes
