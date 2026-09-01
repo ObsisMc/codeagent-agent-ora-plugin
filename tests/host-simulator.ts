@@ -201,14 +201,17 @@ console.log(
   }`,
 );
 
-await send({ jsonrpc: "2.0", id: 2, method: "agent/listModels", params: {} });
-const models = await waitFor((message) => message.id === 2, "agent/listModels");
+await send({ jsonrpc: "2.0", id: 2, method: "agent/list_models", params: {} });
+const models = await waitFor(
+  (message) => message.id === 2,
+  "agent/list_models",
+);
 const modelList = ((models.result ?? {}) as { models?: unknown[] }).models;
 check(
   Array.isArray(modelList) && modelList.length === 0,
-  "agent/listModels is empty because CodeAgent publishes models through ACP",
+  "agent/list_models is empty because CodeAgent publishes models through ACP",
 );
-console.log("ok: listModels [] (CodeAgent publishes models through ACP only)");
+console.log("ok: list_models [] (CodeAgent publishes models through ACP only)");
 
 await send({ jsonrpc: "2.0", id: 3, method: "agent/stop", params: {} });
 await waitFor((message) => message.id === 3, "agent/stop");

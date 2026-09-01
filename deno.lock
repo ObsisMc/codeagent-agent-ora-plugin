@@ -2,7 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@luca/esbuild-deno-loader@~0.11.1": "0.11.1",
-    "jsr:@ora-space/plugin-sdk@0.1.3": "0.1.3",
+    "jsr:@ora-space/plugin-sdk@0.8.0": "0.8.0",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/bytes@^1.0.2": "1.0.6",
     "jsr:@std/encoding@^1.0.5": "1.0.11",
@@ -20,8 +20,8 @@
         "jsr:@std/path"
       ]
     },
-    "@ora-space/plugin-sdk@0.1.3": {
-      "integrity": "b1e9093db67ba4b53433b9bdfdc4f438685ecc2f98ebdd3a3067b911565a5e04"
+    "@ora-space/plugin-sdk@0.8.0": {
+      "integrity": "22a3d97572b49755a8b087f73219aa34b0b4fcb42d6e1940498b928e3c732b6a"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -239,7 +239,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@ora-space/plugin-sdk@0.1.3",
+      "jsr:@ora-space/plugin-sdk@0.8.0",
       "jsr:@std/assert@1"
     ]
   }

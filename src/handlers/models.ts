@@ -1,6 +1,6 @@
 import type { AgentModel } from "@ora-space/plugin-sdk";
 /**
- * Serves `agent/listModels` with an empty pre-session model list.
+ * Serves `agent/list_models` with an empty pre-session model list.
  *
  * CodeAgent publishes its live model choices through the `configOptions` returned by ACP
  * `session/new`. Those session-scoped options are already forwarded to Ora unchanged. Calling

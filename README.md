@@ -12,7 +12,7 @@ provider. Deleting the directory removes the agent.
 ```
 ┌────────────────────────── Ora host (Rust) ───────────────────────────┐
 │  agent_runtime → plugin_agent                                        │
-│    invoke : agent/start · agent/stop · agent/listModels              │
+│    invoke : agent/start · agent/stop · agent/list_models             │
 │    notify : agent/acp (bidirectional, payload never parsed)          │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │ stdio, 4-byte length + 0x01 + JSON-RPC
@@ -34,7 +34,7 @@ provider. Deleting the directory removes the agent.
 | `ora/register` with methods + emits  | `runAgentPlugin` → SDK `defineAgent`: 3 methods, `agent/acp` emit        |
 | `agent/start`                        | `handlers/lifecycle.ts` spawns `codeagent acp` with the host cwd         |
 | `agent/stop`                         | kills the CLI, keeps this process alive so a later start can respawn it  |
-| `agent/listModels`                   | returns `[]`; live models come from ACP `session/new.configOptions`      |
+| `agent/list_models`                  | returns `[]`; live models come from ACP `session/new.configOptions`      |
 | `agent/acp` (both directions)        | `handlers/acp.ts` + `services/codeagent-client.ts`, payload never parsed |
 | CLI absent → `-32001`                | `services/command.ts` throws `PluginMethodError(AGENT_NOT_INSTALLED, …)` |
 | one plugin = one agent = one process | a single plugin instance owning a single `CodeAgentClient`               |
@@ -96,7 +96,7 @@ src/
   base/agent-plugin.ts       AgentPlugin base class + dispatch + runAgentPlugin
   handlers/
     lifecycle.ts             agent/start, agent/stop
-    models.ts                agent/listModels
+    models.ts                agent/list_models
     acp.ts                   agent/acp (host → CLI)
   services/
     codeagent-client.ts      spawns and owns `codeagent acp`, both stdio pumps
@@ -151,12 +151,12 @@ Tagging `v*` builds that bundle and publishes two release assets:
 plugin process:
 
 ```
-ok: register {"methods":["agent/start","agent/stop","agent/listModels"],"emits":["agent/acp"]}
+ok: register {"methods":["agent/start","agent/stop","agent/list_models"],"emits":["agent/acp"]}
 ok: agent/start {"protocol":"acp","acpVersion":1}
 ok: initialize {"protocolVersion":1,"agentCapabilities":{…}}
 ok: session/new ses_… models via ACP: […]
 [host] << {"method":"agent/acp",…}          # streamed session/update forwarded back
-ok: listModels [] (CodeAgent publishes models through ACP only)
+ok: list_models [] (CodeAgent publishes models through ACP only)
 ok: agent/stop
 plugin exited with code 0
 ```
@@ -165,7 +165,7 @@ plugin exited with code 0
 
 - `agent/start` receives the host's home directory as `cwd`; per-session working
   directories travel in ACP `session/new`, which this plugin passes through.
-- The pre-session `agent/listModels` response is intentionally empty. The live
+- The pre-session `agent/list_models` response is intentionally empty. The live
   model list comes from the `configOptions` in each ACP `session/new` result, so
   it stays aligned with the providers available to that session.
 - When the CLI exits on its own the plugin logs it and lets the host observe a
