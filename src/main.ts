@@ -57,7 +57,7 @@ class CodeAgentPlugin extends AgentPlugin {
 
   override onStop = (): Promise<void> => stopCodeAgent(this.#client);
 
-  override onListModels = (): Promise<AgentModel[]> => listCodeAgentModels();
+  override onListModels = (): AgentModel[] => listCodeAgentModels();
 
   override onAcp = (frame: JsonValue): Promise<void> | void =>
     forwardAcpFrame(this.#client, frame);

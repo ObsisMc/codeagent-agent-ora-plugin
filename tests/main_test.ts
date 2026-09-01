@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { listCodeAgentModels } from "../src/handlers/models.ts";
 import {
   BIN_ENV_VAR,
   isCommandNotFound,
@@ -11,6 +12,10 @@ Deno.test("ora-space.codeagent declares an agent kind", async () => {
     new URL("../orax.toml", import.meta.url),
   );
   assertEquals(manifest.includes('kind = "agent"'), true);
+});
+
+Deno.test("models are supplied by ACP rather than the pre-session API", () => {
+  assertEquals(listCodeAgentModels(), []);
 });
 
 Deno.test("a pinned binary is the only candidate", () => {

@@ -1,6 +1,6 @@
 {
   "name": "@ora-space/codeagent-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Ora agent plugin that runs CodeAgent as an ACP agent.",
   "type": "module",
   "license": "Apache-2.0",

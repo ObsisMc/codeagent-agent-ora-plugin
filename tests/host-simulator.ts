@@ -111,6 +111,13 @@ async function waitFor(
   }
 }
 
+/** Fails the simulation loudly and narrows values for the checks that follow. */
+function check(condition: unknown, label: string): asserts condition {
+  if (!condition) {
+    throw new Error(`check failed: ${label}`);
+  }
+}
+
 const acpFrame = (message: Record<string, unknown>): Record<string, unknown> =>
   (message.params ?? {}) as Record<string, unknown>;
 
@@ -168,24 +175,40 @@ const session = await waitFor(
   (message) => message.method === "agent/acp" && acpFrame(message).id === 2,
   "ACP session/new",
 );
+const sessionResult = acpFrame(session).result as {
+  sessionId?: string;
+  configOptions?: { id: string; category?: string; options?: unknown[] }[];
+} | undefined;
+check(
+  typeof sessionResult?.sessionId === "string",
+  "session/new returns an id",
+);
+const modelOption = sessionResult?.configOptions?.find(
+  (option) => option.category === "model",
+);
+check(modelOption !== undefined, "session/new carries a model config option");
+check(
+  Array.isArray(modelOption.options) && modelOption.options.length > 0,
+  "the ACP model config option contains choices",
+);
 console.log(
-  `ok: session/new ${
-    JSON.stringify(acpFrame(session).result ?? acpFrame(session).error).slice(
-      0,
-      200,
+  `ok: session/new ${sessionResult.sessionId} models via ACP: ${
+    JSON.stringify(
+      modelOption.options?.map((option) =>
+        (option as { value?: unknown }).value
+      ),
     )
   }`,
 );
 
 await send({ jsonrpc: "2.0", id: 2, method: "agent/listModels", params: {} });
 const models = await waitFor((message) => message.id === 2, "agent/listModels");
-const modelList = ((models.result ?? {}) as { models?: unknown[] }).models ??
-  [];
-console.log(
-  `ok: listModels ${modelList.length} models, first ${
-    JSON.stringify(modelList[0])
-  }`,
+const modelList = ((models.result ?? {}) as { models?: unknown[] }).models;
+check(
+  Array.isArray(modelList) && modelList.length === 0,
+  "agent/listModels is empty because CodeAgent publishes models through ACP",
 );
+console.log("ok: listModels [] (CodeAgent publishes models through ACP only)");
 
 await send({ jsonrpc: "2.0", id: 3, method: "agent/stop", params: {} });
 await waitFor((message) => message.id === 3, "agent/stop");
