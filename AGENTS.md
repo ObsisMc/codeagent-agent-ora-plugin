@@ -105,10 +105,8 @@ host version is not the SDK version — do not fill it with an SDK number.
 ## Working on this repository
 
 - `deno task check` / `lint` / `format` / `test` / `simulate` / `build`.
-- The SDK is pinned to an unpublished version while the `agent/list_models`
-  `cwd` parameter lands. Until it is published, run every task through the
-  git-ignored local override: `deno task -c deno.local.json <task>`. See README,
-  "Building against an unpublished SDK".
+- The SDK is imported from its published JSR package and pinned in `deno.json`;
+  keep `deno.lock` synchronized when changing the SDK version.
 - `deno task test` needs no CLI: discovery is exercised against a fake
   `HostProcesses` that scripts an ACP peer. `deno task simulate` needs a real
   `codeagent` on PATH.
