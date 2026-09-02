@@ -94,7 +94,7 @@ whether CodeAgent reports a model selector at all. It also has to be a process
 the host spawns — discovery is the likeliest thing to fail halfway, and a
 failure outside the host's ownership leaves an orphan CLI behind.
 
-Answers are reused for a minute per workspace, so a picker that re-renders does
+Answers are reused for five minutes per workspace, so a picker that re-renders does
 not restart the CLI. An agent that exposes no model selector yields an empty
 list, which Ora accepts: its models then arrive with the session instead.
 
@@ -230,7 +230,7 @@ plugin exited with code 0
   directories travel in ACP `session/new`, which this plugin passes through.
 - Discovering the pre-session model list starts a whole CLI and creates one
   session, so an agent that persists its sessions collects one empty
-  conversation per probe unless it serves `session/delete`. The one-minute
+  conversation per probe unless it serves `session/delete`. The five-minute
   per-workspace cache is what keeps that count down.
 - A model the user gains mid-session — a new provider login, an edited config —
   reaches the pre-session picker only after that cache window expires. The

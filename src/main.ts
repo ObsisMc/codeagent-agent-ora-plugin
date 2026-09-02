@@ -14,7 +14,11 @@ import {
 } from "./base/agent-plugin.ts";
 import { forwardAcpFrame } from "./handlers/acp.ts";
 import { startCodeAgent, stopCodeAgent } from "./handlers/lifecycle.ts";
-import { listCodeAgentModels } from "./handlers/models.ts";
+import {
+  invalidateAllCodeAgentModels,
+  invalidateCodeAgentModels,
+  listCodeAgentModels,
+} from "./handlers/models.ts";
 import { CodeAgentClient } from "./services/codeagent-client.ts";
 
 /** Must match `identifier` in orax.toml, which is also this agent's identity inside Ora. */
@@ -32,6 +36,8 @@ class CodeAgentPlugin extends AgentPlugin {
   #send: AcpSender | undefined;
   /** Set by `onActivate`, which the base class runs before the host can call anything. */
   #processes: HostProcesses | undefined;
+  /** Workspace of the live ACP process, used to invalidate its model catalog on lifecycle events. */
+  #cwd: string | undefined;
 
   readonly #client = new CodeAgentClient({
     onAcpFrame: (frame) => {
@@ -42,6 +48,9 @@ class CodeAgentPlugin extends AgentPlugin {
       });
     },
     onExited: () => {
+      if (this.#cwd !== undefined) {
+        invalidateCodeAgentModels(this.#cwd);
+      }
       console.warn(
         "the CodeAgent CLI exited on its own; Ora decides whether to reconnect",
       );
@@ -58,11 +67,21 @@ class CodeAgentPlugin extends AgentPlugin {
     context: AgentStartContext,
     send: AcpSender,
   ): Promise<void> => {
+    if (this.#cwd !== undefined) {
+      invalidateCodeAgentModels(this.#cwd);
+    }
     this.#send = send;
+    this.#cwd = context.cwd;
+    invalidateCodeAgentModels(context.cwd);
     await startCodeAgent(this.#client, context);
   };
 
-  override onStop = (): Promise<void> => stopCodeAgent(this.#client);
+  override onStop = async (): Promise<void> => {
+    if (this.#cwd !== undefined) {
+      invalidateCodeAgentModels(this.#cwd);
+    }
+    await stopCodeAgent(this.#client);
+  };
 
   override onListModels = (
     context: AgentListModelsContext,
@@ -82,6 +101,7 @@ class CodeAgentPlugin extends AgentPlugin {
     forwardAcpFrame(this.#client, frame);
 
   override async onDeactivate(): Promise<void> {
+    invalidateAllCodeAgentModels();
     await this.#client.stop();
   }
 }

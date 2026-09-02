@@ -71,7 +71,7 @@ holds:
 
 The probe declares `clientCapabilities: { session: { configOptions: {} } }` —
 without it the agent reports no model selector. Answers are cached per workspace
-for a minute; a failure is never cached.
+for five minutes; a failure is never cached.
 
 ## Protocol hygiene
 
