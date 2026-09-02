@@ -3,7 +3,9 @@ import {
   AGENT_METHODS,
   type AgentModel,
   type AgentStartContext,
+  createHostProcesses,
   defineAgent,
+  type HostProcesses,
   type JsonValue,
 } from "@ora-space/plugin-sdk";
 
@@ -11,10 +13,29 @@ import {
  * Carries the process-level facts a plugin instance may need outside any agent session.
  *
  * The host hands session-scoped data (cwd, host version) to `onStart` instead, so this stays
- * limited to what is true for the whole plugin process.
+ * limited to what is true for the whole plugin process. `processes` is how an agent plugin spawns
+ * its CLI: the host owns that subprocess instead of this sandboxed runtime spawning it directly,
+ * so it is torn down alongside this plugin generation no matter how that generation ends.
  */
 export interface PluginContext {
   readonly pluginId: string;
+  readonly processes: HostProcesses;
+}
+
+/** What the caller of {@link runAgentPlugin} supplies; `processes` is assembled internally. */
+export interface RunAgentPluginOptions {
+  readonly pluginId: string;
+}
+
+/**
+ * Names the Workspace one model discovery call is answering for.
+ *
+ * Discovery happens outside any session, so this directory is the only thing telling a plugin
+ * which project it is being asked about — a catalog that depends on the project's own
+ * configuration cannot be resolved without it.
+ */
+export interface AgentListModelsContext {
+  readonly cwd: string;
 }
 
 /**
@@ -71,8 +92,10 @@ export abstract class AgentPlugin {
   /** [agent/acp] Receives one ACP frame the host is forwarding to the agent. */
   abstract onAcp(frame: JsonValue): void | Promise<void>;
 
-  /** [agent/list_models] Lists selectable models before any session exists. */
-  abstract onListModels(): AgentModel[] | Promise<AgentModel[]>;
+  /** [agent/list_models] Lists the models selectable in one Workspace before any session exists. */
+  abstract onListModels(
+    context: AgentListModelsContext,
+  ): AgentModel[] | Promise<AgentModel[]>;
 
   // ------------------------- optional agent contract ---------------------------
 
@@ -88,15 +111,17 @@ type BoundHandler = (...args: never[]) => unknown;
  *
  * The instance is first flattened into a wire-name keyed table so dispatch never walks the
  * prototype chain, then adapted onto the SDK's agent definition, which owns the registration
- * handshake and the response shapes the host validates.
+ * handshake and the response shapes the host validates. `defineAgent` is called before
+ * `onActivate` so `createHostProcesses` can be registered on the resulting `Plugin` while it is
+ * still in its pre-run registering state — the same reason `onActivate` itself must run before
+ * `definition.run()` starts serving host traffic.
  */
 export async function runAgentPlugin(
   plugin: AgentPlugin,
-  context: PluginContext,
+  options: RunAgentPluginOptions,
 ): Promise<void> {
   const routes = flattenRoutes(plugin);
   protectProtocolStdout();
-  await plugin.onActivate(context);
 
   const definition = defineAgent({
     start: (startContext, send) =>
@@ -105,8 +130,8 @@ export async function runAgentPlugin(
         | Promise<void>,
     stop: () =>
       invoke(routes, AGENT_METHOD_ROUTES.onStop) as void | Promise<void>,
-    listModels: () =>
-      invoke(routes, AGENT_METHOD_ROUTES.onListModels) as
+    listModels: (context) =>
+      invoke(routes, AGENT_METHOD_ROUTES.onListModels, context) as
         | AgentModel[]
         | Promise<AgentModel[]>,
     onAcp: (frame) =>
@@ -114,6 +139,8 @@ export async function runAgentPlugin(
         | void
         | Promise<void>,
   });
+  const processes = createHostProcesses(definition);
+  await plugin.onActivate({ pluginId: options.pluginId, processes });
 
   try {
     await definition.run();

@@ -2,9 +2,12 @@ import type {
   AcpSender,
   AgentModel,
   AgentStartContext,
+  HostProcesses,
   JsonValue,
 } from "@ora-space/plugin-sdk";
+import { AGENT_METHODS } from "@ora-space/plugin-sdk";
 import {
+  type AgentListModelsContext,
   AgentPlugin,
   type PluginContext,
   runAgentPlugin,
@@ -14,7 +17,7 @@ import { startCodeAgent, stopCodeAgent } from "./handlers/lifecycle.ts";
 import { listCodeAgentModels } from "./handlers/models.ts";
 import { CodeAgentClient } from "./services/codeagent-client.ts";
 
-/** Must match `ora.id` in package.json, which is also this agent's identity inside Ora. */
+/** Must match `identifier` in orax.toml, which is also this agent's identity inside Ora. */
 const PLUGIN_ID = "ora-space.codeagent";
 
 /**
@@ -27,6 +30,8 @@ const PLUGIN_ID = "ora-space.codeagent";
 class CodeAgentPlugin extends AgentPlugin {
   /** Valid only between `agent/start` and the end of the process; frames before that are lost. */
   #send: AcpSender | undefined;
+  /** Set by `onActivate`, which the base class runs before the host can call anything. */
+  #processes: HostProcesses | undefined;
 
   readonly #client = new CodeAgentClient({
     onAcpFrame: (frame) => {
@@ -45,6 +50,8 @@ class CodeAgentPlugin extends AgentPlugin {
 
   override onActivate(context: PluginContext): void {
     console.info(`${context.pluginId} activated`);
+    this.#processes = context.processes;
+    this.#client.attachProcesses(context.processes);
   }
 
   override onStart = async (
@@ -57,7 +64,19 @@ class CodeAgentPlugin extends AgentPlugin {
 
   override onStop = (): Promise<void> => stopCodeAgent(this.#client);
 
-  override onListModels = (): AgentModel[] => listCodeAgentModels();
+  override onListModels = (
+    context: AgentListModelsContext,
+  ): Promise<AgentModel[]> => {
+    if (this.#processes === undefined) {
+      throw new Error(
+        `${AGENT_METHODS.listModels} was called before activation`,
+      );
+    }
+    // Discovery is answered for the Workspace the host named, not for the directory `agent/start`
+    // was given: that one is neutral, and a user can open pickers for a project this connection
+    // never ran in.
+    return listCodeAgentModels(this.#processes, context.cwd);
+  };
 
   override onAcp = (frame: JsonValue): Promise<void> | void =>
     forwardAcpFrame(this.#client, frame);

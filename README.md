@@ -2,8 +2,10 @@
 
 An **agent plugin** for Ora that publishes **CodeAgent** as a selectable agent.
 The plugin runs `codeagent acp` (CodeAgent's
-[Agent Client Protocol](https://agentclientprotocol.com) mode) as a child
-process and bridges it to Ora as a pure ACP pipe.
+[Agent Client Protocol](https://agentclientprotocol.com) mode) and bridges it to
+Ora as a pure ACP pipe. The process itself is spawned and owned by the host
+through `ora/childprocess/*`, so Ora reaps it with this plugin generation
+however that generation ends.
 
 Nothing in Ora is hardcoded for this plugin: it is discovered from the installed
 plugin directory, validated from `orax.toml`, and launched as an ordinary agent
@@ -34,27 +36,34 @@ provider. Deleting the directory removes the agent.
 | `ora/register` with methods + emits  | `runAgentPlugin` → SDK `defineAgent`: 3 methods, `agent/acp` emit        |
 | `agent/start`                        | `handlers/lifecycle.ts` spawns `codeagent acp` with the host cwd         |
 | `agent/stop`                         | kills the CLI, keeps this process alive so a later start can respawn it  |
-| `agent/list_models`                  | returns `[]`; live models come from ACP `session/new.configOptions`      |
+| `agent/list_models`                  | `handlers/models.ts` probes a throwaway ACP session for the workspace    |
 | `agent/acp` (both directions)        | `handlers/acp.ts` + `services/codeagent-client.ts`, payload never parsed |
 | CLI absent → `-32001`                | `services/command.ts` throws `PluginMethodError(AGENT_NOT_INSTALLED, …)` |
+| every subprocess is host-owned       | `createHostProcesses` → `ora/childprocess/*`, never `Deno.Command`       |
 | one plugin = one agent = one process | a single plugin instance owning a single `CodeAgentClient`               |
 
 ## Resolving the CLI
 
-`codeagent` is looked up on PATH. Windows installers disagree on what they put
-there, so three spellings are tried in order:
+`codeagent` is looked up on PATH — by the host, which owns the resulting
+process. Windows installers disagree on what they put there, so four spellings
+are tried in order, following Windows' own `PATHEXT` precedence:
 
 | Order | Candidate       | Comes from                                     |
 | ----- | --------------- | ---------------------------------------------- |
 | 1     | `codeagent.exe` | a native install (scoop, choco, standalone)    |
 | 2     | `codeagent.cmd` | the batch shim npm and bun write for a package |
-| 3     | `codeagent`     | an extensionless launcher                      |
+| 3     | `codeagent.bat` | an installer or hand-written batch wrapper     |
+| 4     | `codeagent`     | an extensionless launcher                      |
 
-The `.exe` goes first deliberately. A `.cmd` shim runs under `cmd.exe`, so the
-process this plugin holds a handle to is the shim, not the CLI — killing it on
-`agent/stop` can leave the real child running. `stop()` closes stdin before the
-kill for the same reason, giving a CLI that exits on EOF the chance to shut
-itself down cleanly.
+The `.exe` goes first deliberately: a `.cmd` or `.bat` wrapper runs under
+`cmd.exe`, so the process resolved from it is the wrapper rather than the CLI.
+`stop()` closes stdin before the kill for the same reason, giving a CLI that
+exits on EOF the chance to shut itself down cleanly — though the host's own kill
+is tree-wide, so a shim's real child no longer survives it.
+
+Only the spelling that is missing from PATH moves on to the next candidate. One
+that resolved and then failed is a real fault and is raised as-is, so it is
+never buried under the next attempt.
 
 Non-Windows platforms only try `codeagent`.
 
@@ -66,6 +75,28 @@ The working directory is set as the child process's own `cwd` rather than passed
 as a flag, so this does not depend on how the CLI spells its working-directory
 option. Per-session directories travel in ACP `session/new`, which this plugin
 passes through untouched.
+
+## Model discovery
+
+CodeAgent publishes its model choices in one place: the `configOptions` an ACP
+session carries. There is no pre-session listing to read, so when Ora asks this
+plugin which models a workspace offers, the plugin starts a second, throwaway
+`codeagent acp` in that directory, runs `initialize` → `session/new` on it,
+reads the model selector out of the answer, deletes the probe session if the CLI
+says it can, and kills the process. The pre-session list and the in-session
+picker are therefore two readings of one source rather than two sources that can
+disagree.
+
+It has to be a separate process. The connection Ora holds is one Ora owns both
+ends of: a request injected into it would return its answer down Ora's pipe, and
+the client capabilities Ora declares in its own `initialize` are what decide
+whether CodeAgent reports a model selector at all. It also has to be a process
+the host spawns — discovery is the likeliest thing to fail halfway, and a
+failure outside the host's ownership leaves an orphan CLI behind.
+
+Answers are reused for a minute per workspace, so a picker that re-renders does
+not restart the CLI. An agent that exposes no model selector yields an empty
+list, which Ora accepts: its models then arrive with the session instead.
 
 ## API registration architecture
 
@@ -88,8 +119,7 @@ handler modules onto it.
 ## Layout
 
 ```
-package.json                 Ora plugin manifest (ora.id, engines, contributes)
-orax.toml                    packaging metadata read by the release workflow
+orax.toml                    the plugin manifest Ora reads: identity, kind, version
 deno.json                    developer tasks and the import map
 src/
   main.ts                    entrypoint: mounts handlers onto the base class
@@ -99,11 +129,12 @@ src/
     models.ts                agent/list_models
     acp.ts                   agent/acp (host → CLI)
   services/
-    codeagent-client.ts      spawns and owns `codeagent acp`, both stdio pumps
-    command.ts               binary resolution, spawn candidates, not-found mapping
+    codeagent-client.ts      owns the live `codeagent acp`, both stdio pumps
+    acp-probe.ts             one short-lived ACP conversation, for discovery
+    command.ts               which program the host is asked to spawn, and how a miss is classified
     ndjson.ts                NDJSON line codec for the CLI's stdio
 tests/
-  main_test.ts               unit tests for CLI resolution and NDJSON framing
+  main_test.ts               unit tests for discovery, CLI resolution, NDJSON framing
   host-simulator.ts          drives this plugin the way the Ora host does
 ```
 
@@ -118,9 +149,41 @@ package.
 - Deno, which Ora provides for plugin processes.
 
 Ora launches agent plugins with
-`--allow-run --allow-read --allow-env --allow-net`; this plugin needs all four
-(spawn the CLI, resolve it, read `ORA_CODEAGENT_BIN`, let the CLI reach its
-providers).
+`--allow-run --allow-read --allow-env --allow-net`. This plugin no longer needs
+`--allow-run` of its own — every process it uses is spawned by the host through
+`ora/childprocess/*` — but it still reads `ORA_CODEAGENT_BIN` from the
+environment, and the CLI the host starts on its behalf reaches its providers
+over the network.
+
+### Host requirement
+
+This plugin needs an Ora that sends the workspace `cwd` with
+`agent/list_models`. Without it there is no directory to discover models for,
+and the plugin answers `-32602` naming the missing parameter rather than probing
+against nothing.
+
+That requirement is deliberately **not** declared in `orax.toml`, even though
+the schema has the right field for it:
+
+```toml
+[dependencies]
+ora = ">= x.y.z"
+```
+
+Ora parses and validates that table (only `ora` is accepted in it), so it is
+where a host requirement belongs — but the host version carrying the parameter
+does not exist yet. Ora is at 0.1.0 and the parameter is an unreleased change,
+so any number written here today would either be false or vacuous, and a
+requirement no host satisfies would make the plugin uninstallable the moment Ora
+starts enforcing the field. Fill it in once there is a real host version to
+name.
+
+Note that the plugin SDK's version and Ora's are separate lines. This plugin
+builds against SDK 0.9.0; that is not an Ora version. The `package.json` this
+repository used to carry declared `engines.ora >= 0.8.0` — an SDK version in a
+host-version field, in a file no Ora release has ever read: shipped `.orax`
+packages contain only `orax.toml`, `main.js`, `logo.svg`, and `README.md`. It
+has been removed rather than corrected.
 
 ## Install
 
@@ -144,8 +207,8 @@ Tagging `v*` builds that bundle and publishes two release assets:
 
 - `ora-space.codeagent-<tag>.orax`, a universal flat zip of `orax.toml`,
   `dist/main.js`, `logo.svg`, and `README.md`.
-- `manifest.toml`, the marketplace form of `orax.toml`, with top-level `url`
-  and `sha256` fields pointing to and verifying that universal archive.
+- `manifest.toml`, the marketplace form of `orax.toml`, with top-level `url` and
+  `sha256` fields pointing to and verifying that universal archive.
 
 `deno task simulate` speaks Ora's binary frame protocol to a freshly launched
 plugin process:
@@ -156,7 +219,7 @@ ok: agent/start {"protocol":"acp","acpVersion":1}
 ok: initialize {"protocolVersion":1,"agentCapabilities":{…}}
 ok: session/new ses_… models via ACP: […]
 [host] << {"method":"agent/acp",…}          # streamed session/update forwarded back
-ok: list_models [] (CodeAgent publishes models through ACP only)
+ok: list_models 4 models via a probe session, first {"id":…}
 ok: agent/stop
 plugin exited with code 0
 ```
@@ -165,17 +228,19 @@ plugin exited with code 0
 
 - `agent/start` receives the host's home directory as `cwd`; per-session working
   directories travel in ACP `session/new`, which this plugin passes through.
-- The pre-session `agent/list_models` response is intentionally empty. The live
-  model list comes from the `configOptions` in each ACP `session/new` result, so
-  it stays aligned with the providers available to that session.
+- Discovering the pre-session model list starts a whole CLI and creates one
+  session, so an agent that persists its sessions collects one empty
+  conversation per probe unless it serves `session/delete`. The one-minute
+  per-workspace cache is what keeps that count down.
+- A model the user gains mid-session — a new provider login, an edited config —
+  reaches the pre-session picker only after that cache window expires. The
+  in-session picker is unaffected: it reads the live session's `configOptions`.
 - When the CLI exits on its own the plugin logs it and lets the host observe a
   stalled connection; the contract has no `agent/exited` notification yet.
 - Killing the CLI on `agent/stop` is best effort; Ora retains process-tree
   reaping.
-- Neither manifest declares permissions. The plugin needs `--allow-run` to spawn
-  the CLI, `--allow-read`/`--allow-env` to resolve it (PATH and
-  `ORA_CODEAGENT_BIN`), and `--allow-net` for the CLI's providers, but it relies
-  on the flags Ora grants agent plugins today: the model in `ora-space/specs`
+- Neither manifest declares permissions. The plugin relies on the flags Ora
+  grants agent plugins today: the model in `ora-space/specs`
   (`permissions.process`) is not the schema orax accepts, and orax rejects
   unknown fields, so the declaration waits for the host to ship it.
 

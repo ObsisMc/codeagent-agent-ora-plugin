@@ -1,5 +1,5 @@
-import type { JsonValue } from "@ora-space/plugin-sdk";
-import { tryEachCandidate } from "./command.ts";
+import type { HostProcesses, JsonValue } from "@ora-space/plugin-sdk";
+import { spawnCodeAgent } from "./command.ts";
 import { decodeLines, encodeLine } from "./ndjson.ts";
 
 /** The subset of a spawned child process this bridge depends on, so tests can substitute one. */
@@ -7,14 +7,19 @@ export interface SpawnedProcess {
   stdin: WritableStream<Uint8Array>;
   stdout: ReadableStream<Uint8Array>;
   stderr: ReadableStream<Uint8Array>;
-  readonly pid: number;
+  readonly pid: number | undefined;
   kill(): void;
   readonly exited: Promise<void>;
 }
 
 export interface CodeAgentClientOptions {
-  /** Overrides process spawning; injected by tests. */
-  spawn?: (command: string, args: string[], cwd: string) => SpawnedProcess;
+  /**
+   * Overrides process spawning; injected by tests. Production spawns through `attachProcesses`.
+   *
+   * Which program a spawn resolves to is `command.ts`'s decision and is deliberately not a
+   * parameter here: this class owns the CLI's lifetime, not the question of where it lives.
+   */
+  spawn?: (args: string[], cwd: string) => SpawnedProcess;
   /** Receives every ACP frame emitted by the CLI, in output order. */
   onAcpFrame?: (frame: JsonValue) => void;
   /** Invoked after the CLI exits on its own, never after an explicit stop. */
@@ -36,23 +41,36 @@ interface RunningProcess {
  */
 export class CodeAgentClient {
   readonly #spawn: (
-    command: string,
     args: string[],
     cwd: string,
-  ) => SpawnedProcess;
+  ) => SpawnedProcess | Promise<SpawnedProcess>;
   readonly #onAcpFrame: (frame: JsonValue) => void;
   readonly #onExited: () => void;
+  /** Supplied by `attachProcesses` once the plugin's `Plugin` instance exists; see `main.ts`. */
+  #processes: HostProcesses | undefined;
   #running: RunningProcess | undefined;
   #expectedExit = false;
 
   constructor(options: CodeAgentClientOptions = {}) {
-    this.#spawn = options.spawn ?? spawnCodeAgentProcess;
+    this.#spawn = options.spawn ??
+      ((args, cwd) => this.#spawnViaHost(args, cwd));
     this.#onAcpFrame = options.onAcpFrame ?? (() => {});
     this.#onExited = options.onExited ?? (() => {});
   }
 
   get running(): boolean {
     return this.#running !== undefined;
+  }
+
+  /**
+   * Supplies the host-managed process client this plugin spawns `codeagent acp` through.
+   *
+   * Called once, from `onActivate`: the `Plugin` instance `createHostProcesses` needs does not
+   * exist yet when this client is constructed as a class field, so production spawning stays
+   * unavailable until this runs. Tests that inject `options.spawn` never need to call it.
+   */
+  attachProcesses(processes: HostProcesses): void {
+    this.#processes = processes;
   }
 
   /**
@@ -69,12 +87,11 @@ export class CodeAgentClient {
     await this.stop();
     this.#expectedExit = false;
 
-    await tryEachCandidate((command) => {
-      const process = this.#spawn(command, ["acp"], cwd);
-      this.#running = { process, stdinWriter: process.stdin.getWriter() };
-      this.#attach(process);
-      return process;
-    });
+    // Failures are already classified for Ora by `spawnCodeAgent`: a CLI this machine does not
+    // have stays retryable, while a pin naming a missing executable says so by name.
+    const process = await this.#spawn(["acp"], cwd);
+    this.#running = { process, stdinWriter: process.stdin.getWriter() };
+    this.#attach(process);
   }
 
   /**
@@ -95,8 +112,7 @@ export class CodeAgentClient {
    * Kills the CLI and releases every pipe; idempotent when already stopped.
    *
    * stdin is closed before the kill so a CLI that shuts down on EOF gets to exit on its own
-   * terms. That matters most on Windows, where a `.cmd` shim would otherwise be killed while the
-   * real CLI underneath it kept running.
+   * terms, and the host's own kill is tree-wide, so a shim's real child does not survive it.
    */
   async stop(): Promise<void> {
     const running = this.#running;
@@ -122,9 +138,14 @@ export class CodeAgentClient {
     void this.#pumpStdout(process);
     void this.#pumpStderr(process);
     void process.exited.then(() => {
-      if (this.#running?.process === process) {
-        this.#running = undefined;
+      // A process that is no longer `#running` was already superseded by a later `start()`; its
+      // death is old news, not a live agent going away, so it must never clear the new process's
+      // tracking or fire `onExited` regardless of the shared `#expectedExit` flag, which by then
+      // reflects the newer generation's intent rather than this one's.
+      if (this.#running?.process !== process) {
+        return;
       }
+      this.#running = undefined;
       if (!this.#expectedExit) {
         console.warn("codeagent acp exited unexpectedly");
         this.#onExited();
@@ -174,27 +195,30 @@ export class CodeAgentClient {
       console.warn(`codeagent stderr read failed: ${error}`);
     }
   }
-}
 
-/** Spawns the CLI with all three stdio pipes exposed for streaming. */
-function spawnCodeAgentProcess(
-  command: string,
-  args: string[],
-  cwd: string,
-): SpawnedProcess {
-  const child = new Deno.Command(command, {
-    args,
-    cwd,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  return {
-    stdin: child.stdin,
-    stdout: child.stdout,
-    stderr: child.stderr,
-    pid: child.pid,
-    kill: () => child.kill(),
-    exited: child.status.then(() => undefined),
-  };
+  /**
+   * Asks the host to spawn and own the CLI process, adapting its `HostChildProcess` handle onto
+   * `SpawnedProcess` so every other method above stays unaware of who owns the OS process.
+   */
+  async #spawnViaHost(args: string[], cwd: string): Promise<SpawnedProcess> {
+    if (this.#processes === undefined) {
+      throw new Error(
+        "CodeAgentClient cannot spawn before attachProcesses() runs",
+      );
+    }
+    const child = await spawnCodeAgent(this.#processes, { args, cwd });
+    return {
+      stdin: new WritableStream<Uint8Array>({
+        write: (chunk) => child.write(chunk),
+        close: () => child.closeStdin(),
+      }),
+      stdout: child.stdout,
+      stderr: child.stderr,
+      pid: child.pid,
+      // Best effort: the host already treats kill() as idempotent and tolerant of a process
+      // that is already gone, so a rejection here is nothing callers need to observe.
+      kill: () => void child.kill().catch(() => {}),
+      exited: child.exited.then(() => undefined),
+    };
+  }
 }

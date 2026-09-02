@@ -1,3 +1,7 @@
 dist/
 .DS_Store
 *.orax
+
+# Local-only Deno config and its lock, for building against an unpublished @ora-space/plugin-sdk.
+deno.local.json
+deno.local.lock
