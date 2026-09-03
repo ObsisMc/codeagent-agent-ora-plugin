@@ -82,10 +82,12 @@ call all three methods:
   already rescanned, which would tear down the sessions that came back from the
   first restart.
 
-`SKILLS_RESOURCE.workspaceRelativePath` names CodeAgent's own directory rather
-than a shared one like `.claude/skills`. Ora fully owns what it materializes
-into a declared Resource, so declaring a shared directory would have Ora
-reconcile away Skills another tool put there.
+`SKILLS_RESOURCE.workspaceRelativePath` is `.cac/skills` — CodeAgent's own
+directory, and note it is `.cac`, not `.codeagent`. Do not "correct" it to match
+the CLI's name or the plugin's. It is also deliberately not a shared directory
+like `.claude/skills`: Ora fully owns what it materializes into a declared
+Resource, so declaring a shared one would have Ora reconcile away Skills another
+tool put there.
 
 ## Resolving the CLI on Windows — always include `.bat`
 

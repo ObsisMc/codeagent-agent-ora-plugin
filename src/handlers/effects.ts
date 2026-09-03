@@ -10,19 +10,20 @@ import type { CodeAgentClient } from "../services/codeagent-client.ts";
 import { invalidateCodeAgentModels } from "./models.ts";
 
 /**
- * The Skill Resource CodeAgent reads: a project-relative `.codeagent/skills/<name>/SKILL.md` tree.
+ * The Skill Resource CodeAgent reads: a project-relative `.cac/skills/<name>/SKILL.md` tree.
  *
- * The path is the one thing here that is a property of the CLI rather than of this plugin, and it
- * is deliberately the agent's own directory rather than a compatibility one. CodeAgent may also
- * read `.claude/skills` or `.agents/skills` the way sibling CLIs do, but those are Preserved State
- * from this plugin's point of view: Ora fully owns what it materializes into a declared Resource,
- * so declaring a shared directory would have Ora reconcile away Skills another tool put there.
+ * `.cac` is the CLI's own directory and the only one declared here. CodeAgent may also read
+ * compatibility directories the way sibling CLIs do — `.claude/skills`, `.agents/skills` — but
+ * those are Preserved State from this plugin's point of view: Ora fully owns what it materializes
+ * into a declared Resource, so declaring a shared directory would have Ora reconcile away Skills
+ * another tool put there.
  *
- * If the CLI turns out to read a different directory, this constant is the only edit needed —
- * everything below coordinates a restart and never looks at the path.
+ * The path is the one thing here that is a property of the CLI rather than of this plugin, so it
+ * is also the only thing to change if the CLI ever moves it — everything below coordinates a
+ * restart and never looks at the path.
  */
 export const SKILLS_RESOURCE: EffectResourceDeclaration = {
-  workspaceRelativePath: ".codeagent/skills",
+  workspaceRelativePath: ".cac/skills",
   materializationFormat: SKILL_DIRECTORY_V1,
   coordination: "quiesce_before_mutation",
 };
@@ -47,7 +48,7 @@ const QUIESCE_TIMEOUT_MS = 10_000;
 const QUIESCE_POLL_MS = 50;
 
 /**
- * Coordinates the `.codeagent/skills` Effect Resource against the one CLI process this plugin owns.
+ * Coordinates the `.cac/skills` Effect Resource against the one CLI process this plugin owns.
  *
  * A Skill edit on disk reaches the CLI only once the CLI reads the directory again, and when that
  * happens is the CLI's business — at startup for an agent that scans once, at `session/new` for
@@ -155,7 +156,7 @@ export class SkillEffectCoordinator {
   }
 
   /**
-   * Restarts the CLI so it reads `.codeagent/skills` again, then replays every held turn in order.
+   * Restarts the CLI so it reads `.cac/skills` again, then replays every held turn in order.
    *
    * The barrier is the idempotence marker: a repeat call finds none held — exactly the state a
    * finished reactivation leaves behind — and does not restart a CLI that has already rescanned,

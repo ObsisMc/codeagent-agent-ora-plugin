@@ -170,7 +170,7 @@ Deno.test("discovery without a workspace is refused rather than guessed", () => 
 Deno.test("the Skill Resource is declared in the shape Ora materializes", () => {
   // Without this declaration `ora/register` omits `effectResources` entirely and Ora silently has
   // nothing to write into the Workspace, which is the failure this whole handler exists to avoid.
-  assertEquals(SKILLS_RESOURCE.workspaceRelativePath, ".codeagent/skills");
+  assertEquals(SKILLS_RESOURCE.workspaceRelativePath, ".cac/skills");
   assertEquals(SKILLS_RESOURCE.materializationFormat, SKILL_DIRECTORY_V1);
   assertEquals(SKILLS_RESOURCE.coordination, "quiesce_before_mutation");
 });

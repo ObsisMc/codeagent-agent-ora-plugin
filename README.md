@@ -24,7 +24,7 @@ provider. Deleting the directory removes the agent.
 │  src/main.ts        CodeAgentPlugin extends AgentPlugin              │
 │  src/handlers/*     one module per registered API                    │
 │  src/services/*     CodeAgent CLI ownership, NDJSON framing          │
-│  Skill Resource     .codeagent/skills, materialized by Ora           │
+│  Skill Resource     .cac/skills, materialized by Ora                 │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │ NDJSON, one JSON-RPC object per line
                              v
@@ -109,14 +109,13 @@ empty list, which Ora accepts: its models then arrive with the session instead.
 ## Skills
 
 Ora materializes the Skills a Workspace has enabled into
-`.codeagent/skills/<name>/SKILL.md` and keeps that tree converged with what the
-user selected. Nothing happens automatically: a plugin only receives that
-treatment for a directory it **declares**, which this one does in
-`handlers/effects.ts`:
+`.cac/skills/<name>/SKILL.md` and keeps that tree converged with what the user
+selected. Nothing happens automatically: a plugin only receives that treatment
+for a directory it **declares**, which this one does in `handlers/effects.ts`:
 
 ```ts
 export const SKILLS_RESOURCE: EffectResourceDeclaration = {
-  workspaceRelativePath: ".codeagent/skills",
+  workspaceRelativePath: ".cac/skills",
   materializationFormat: SKILL_DIRECTORY_V1,
   coordination: "quiesce_before_mutation",
 };
