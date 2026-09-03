@@ -15,6 +15,7 @@ provider. Deleting the directory removes the agent.
 ┌────────────────────────── Ora host (Rust) ───────────────────────────┐
 │  agent_runtime → plugin_agent                                        │
 │    invoke : agent/start · agent/stop · agent/list_models             │
+│            effect/coordinate · effect/reactivate · verify_ready      │
 │    notify : agent/acp (bidirectional, payload never parsed)          │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │ stdio, 4-byte length + 0x01 + JSON-RPC
@@ -23,6 +24,7 @@ provider. Deleting the directory removes the agent.
 │  src/main.ts        CodeAgentPlugin extends AgentPlugin              │
 │  src/handlers/*     one module per registered API                    │
 │  src/services/*     CodeAgent CLI ownership, NDJSON framing          │
+│  Skill Resource     .codeagent/skills, materialized by Ora           │
 └────────────────────────────┬─────────────────────────────────────────┘
                              │ NDJSON, one JSON-RPC object per line
                              v
@@ -31,16 +33,18 @@ provider. Deleting the directory removes the agent.
 
 ## Contract mapping
 
-| Host requirement                     | Implementation                                                           |
-| ------------------------------------ | ------------------------------------------------------------------------ |
-| `ora/register` with methods + emits  | `runAgentPlugin` → SDK `defineAgent`: 3 methods, `agent/acp` emit        |
-| `agent/start`                        | `handlers/lifecycle.ts` spawns `codeagent acp` with the host cwd         |
-| `agent/stop`                         | kills the CLI, keeps this process alive so a later start can respawn it  |
-| `agent/list_models`                  | `handlers/models.ts` probes a throwaway ACP session for the workspace    |
-| `agent/acp` (both directions)        | `handlers/acp.ts` + `services/codeagent-client.ts`, payload never parsed |
-| CLI absent → `-32001`                | `services/command.ts` throws `PluginMethodError(AGENT_NOT_INSTALLED, …)` |
-| every subprocess is host-owned       | `createHostProcesses` → `ora/childprocess/*`, never `Deno.Command`       |
-| one plugin = one agent = one process | a single plugin instance owning a single `CodeAgentClient`               |
+| Host requirement                                    | Implementation                                                              |
+| --------------------------------------------------- | --------------------------------------------------------------------------- |
+| `ora/register` with methods + emits                 | `runAgentPlugin` → SDK `defineAgent`: 6 methods, `agent/acp` emit           |
+| `agent/start`                                       | `handlers/lifecycle.ts` spawns `codeagent acp` with the host cwd            |
+| `agent/stop`                                        | kills the CLI, keeps this process alive so a later start can respawn it     |
+| `agent/list_models`                                 | `handlers/models.ts` probes a throwaway ACP session for the workspace       |
+| `agent/acp` (both directions)                       | `handlers/acp.ts` + `services/codeagent-client.ts`, payload never parsed    |
+| Skill Resource declaration                          | `handlers/effects.ts` → `AgentPlugin.effects` → SDK `declareEffectResource` |
+| `effect/coordinate` · `reactivate` · `verify_ready` | `handlers/effects.ts` `SkillEffectCoordinator`                              |
+| CLI absent → `-32001`                               | `services/command.ts` throws `PluginMethodError(AGENT_NOT_INSTALLED, …)`    |
+| every subprocess is host-owned                      | `createHostProcesses` → `ora/childprocess/*`, never `Deno.Command`          |
+| one plugin = one agent = one process                | a single plugin instance owning a single `CodeAgentClient`                  |
 
 ## Resolving the CLI
 
@@ -50,16 +54,20 @@ are tried in order, following Windows' own `PATHEXT` precedence:
 
 | Order | Candidate       | Comes from                                     |
 | ----- | --------------- | ---------------------------------------------- |
-| 1     | `codeagent.exe` | a native install (scoop, choco, standalone)    |
-| 2     | `codeagent.cmd` | the batch shim npm and bun write for a package |
-| 3     | `codeagent.bat` | an installer or hand-written batch wrapper     |
+| 1     | `codeagent.bat` | the batch wrapper CodeAgent is distributed as  |
+| 2     | `codeagent.exe` | a native install (scoop, choco, standalone)    |
+| 3     | `codeagent.cmd` | the batch shim npm and bun write for a package |
 | 4     | `codeagent`     | an extensionless launcher                      |
 
-The `.exe` goes first deliberately: a `.cmd` or `.bat` wrapper runs under
-`cmd.exe`, so the process resolved from it is the wrapper rather than the CLI.
-`stop()` closes stdin before the kill for the same reason, giving a CLI that
-exits on EOF the chance to shut itself down cleanly — though the host's own kill
-is tree-wide, so a shim's real child no longer survives it.
+`.bat` goes first deliberately, against Windows' own `PATHEXT` precedence: it is
+the spelling a real CodeAgent install answers to, so leading with it costs one
+host round trip instead of three misses before it. The tradeoff is that a `.bat`
+wrapper runs under `cmd.exe`, so on a machine that has both a wrapper and a
+native binary the process the host holds is the wrapper rather than the CLI.
+`stop()` closes stdin before the kill partly for that reason, giving a CLI that
+exits on EOF the chance to shut itself down cleanly — and the host's own kill is
+tree-wide, so a shim's real child does not survive it either way. A user who has
+a native binary and wants it held directly names it with `ORA_CODEAGENT_BIN`.
 
 Only the spelling that is missing from PATH moves on to the next candidate. One
 that resolved and then failed is a real fault and is raised as-is, so it is
@@ -94,9 +102,50 @@ whether CodeAgent reports a model selector at all. It also has to be a process
 the host spawns — discovery is the likeliest thing to fail halfway, and a
 failure outside the host's ownership leaves an orphan CLI behind.
 
-Answers are reused for five minutes per workspace, so a picker that re-renders does
-not restart the CLI. An agent that exposes no model selector yields an empty
-list, which Ora accepts: its models then arrive with the session instead.
+Answers are reused for five minutes per workspace, so a picker that re-renders
+does not restart the CLI. An agent that exposes no model selector yields an
+empty list, which Ora accepts: its models then arrive with the session instead.
+
+## Skills
+
+Ora materializes the Skills a Workspace has enabled into
+`.codeagent/skills/<name>/SKILL.md` and keeps that tree converged with what the
+user selected. Nothing happens automatically: a plugin only receives that
+treatment for a directory it **declares**, which this one does in
+`handlers/effects.ts`:
+
+```ts
+export const SKILLS_RESOURCE: EffectResourceDeclaration = {
+  workspaceRelativePath: ".codeagent/skills",
+  materializationFormat: SKILL_DIRECTORY_V1,
+  coordination: "quiesce_before_mutation",
+};
+```
+
+Declaring a Resource is also a promise to coordinate its mutation, which is the
+other half of `handlers/effects.ts`. A Skill edit on disk only reaches the CLI
+once the CLI reads the directory again, so the plugin restarts it around every
+write:
+
+1. **`effect/coordinate`** raises a barrier that absorbs new `session/prompt`
+   frames, then waits up to ten seconds for the turns already running to answer.
+   The barrier goes up _before_ the wait, so the set of turns to drain is finite
+   even in a Workspace whose prompts keep arriving.
+2. Ora writes the tree.
+3. **`effect/reactivate`** respawns `codeagent acp` — which is what makes the
+   new Skills visible, whether the CLI scans once at startup or resolves per
+   session — and replays every held frame in order.
+4. **`effect/verify_ready`** answers whether the running process is one that has
+   read what is on disk: it throws `-32000` while the CLI is down or still
+   quiesced, and returns the projection identity unchanged otherwise.
+
+Both coordination calls are idempotent, because Ora may retry either one. The
+held-frame queue doubles as the marker: a repeat `reactivate` finds nothing held
+— the state a finished reactivation leaves behind — and does not restart a CLI
+that has already rescanned.
+
+Turn tracking reads only `method` and `id` off the ACP envelope. The payload is
+still never parsed.
 
 ## API registration architecture
 
@@ -128,13 +177,14 @@ src/
     lifecycle.ts             agent/start, agent/stop
     models.ts                agent/list_models
     acp.ts                   agent/acp (host → CLI)
+    effects.ts               Skill Resource declaration + effect/* coordination
   services/
     codeagent-client.ts      owns the live `codeagent acp`, both stdio pumps
     acp-probe.ts             one short-lived ACP conversation, for discovery
     command.ts               which program the host is asked to spawn, and how a miss is classified
     ndjson.ts                NDJSON line codec for the CLI's stdio
 tests/
-  main_test.ts               unit tests for discovery, CLI resolution, NDJSON framing
+  main_test.ts               unit tests for discovery, CLI resolution, effects, NDJSON framing
   host-simulator.ts          drives this plugin the way the Ora host does
 ```
 
@@ -161,6 +211,10 @@ This plugin needs an Ora that sends the workspace `cwd` with
 `agent/list_models`. Without it there is no directory to discover models for,
 and the plugin answers `-32602` naming the missing parameter rather than probing
 against nothing.
+
+It also needs an Ora that serves the Effect contract, which is what materializes
+Skills. An older host simply never calls `effect/*` and never writes the tree;
+the agent still works, without Skills.
 
 That requirement is deliberately **not** declared in `orax.toml`, even though
 the schema has the right field for it:

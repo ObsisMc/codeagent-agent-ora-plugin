@@ -1,6 +1,7 @@
 import {
   type AcpSender,
   AGENT_METHODS,
+  type AgentEffectDefinition,
   type AgentModel,
   type AgentStartContext,
   createHostProcesses,
@@ -101,6 +102,19 @@ export abstract class AgentPlugin {
 
   /** [agent/stop] Terminates the agent while leaving this plugin process alive. */
   onStop(): void | Promise<void> {}
+
+  /**
+   * Declares the Effect Resources this plugin consumes and coordinates their safe mutation.
+   *
+   * `undefined` opts the plugin out of the Effect contract entirely, and opting out is not free:
+   * a plugin that leaves this unset never reaches `declareEffectResource`, so `ora/register`
+   * carries no `effectResources` at all and Ora has nothing to materialize into the Workspace.
+   * A Skill imported for such an agent is accepted by Ora and then never appears on disk, with no
+   * error anywhere to explain it. Any agent whose CLI reads Skills sets this to a value serving
+   * `effect/coordinate`, `effect/reactivate`, and `effect/verify_ready`, by mounting a handler
+   * module the same way `onStart` and friends are mounted above.
+   */
+  effects: AgentEffectDefinition | undefined = undefined;
 }
 
 /** One entry of the flattened dispatch table, already bound to its plugin instance. */
@@ -138,6 +152,9 @@ export async function runAgentPlugin(
       invoke(routes, AGENT_NOTIFICATION_ROUTES.onAcp, frame) as
         | void
         | Promise<void>,
+    // Read off the instance rather than routed like the methods above: the Effect contract is
+    // three SDK-registered methods behind one declaration, not a wire name this table maps.
+    effects: plugin.effects,
   });
   const processes = createHostProcesses(definition);
   await plugin.onActivate({ pluginId: options.pluginId, processes });

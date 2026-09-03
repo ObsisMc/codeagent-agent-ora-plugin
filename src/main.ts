@@ -13,6 +13,7 @@ import {
   runAgentPlugin,
 } from "./base/agent-plugin.ts";
 import { forwardAcpFrame } from "./handlers/acp.ts";
+import { SkillEffectCoordinator } from "./handlers/effects.ts";
 import { startCodeAgent, stopCodeAgent } from "./handlers/lifecycle.ts";
 import {
   invalidateAllCodeAgentModels,
@@ -36,11 +37,17 @@ class CodeAgentPlugin extends AgentPlugin {
   #send: AcpSender | undefined;
   /** Set by `onActivate`, which the base class runs before the host can call anything. */
   #processes: HostProcesses | undefined;
-  /** Workspace of the live ACP process, used to invalidate its model catalog on lifecycle events. */
+  /**
+   * Workspace of the live ACP process.
+   *
+   * Used to invalidate its model catalog on lifecycle events, and as the directory a Skill Effect
+   * restart respawns the CLI into.
+   */
   #cwd: string | undefined;
 
   readonly #client = new CodeAgentClient({
     onAcpFrame: (frame) => {
+      this.#effects.observe(frame);
       // A send failure means the host connection is already gone; there is nothing this plugin
       // can do with the frame, and throwing here would only kill the stdout pump.
       void this.#send?.(frame).catch((error) => {
@@ -56,6 +63,10 @@ class CodeAgentPlugin extends AgentPlugin {
       );
     },
   });
+
+  readonly #effects = new SkillEffectCoordinator(this.#client, () => this.#cwd);
+
+  override readonly effects = this.#effects.definition;
 
   override onActivate(context: PluginContext): void {
     console.info(`${context.pluginId} activated`);
@@ -98,7 +109,7 @@ class CodeAgentPlugin extends AgentPlugin {
   };
 
   override onAcp = (frame: JsonValue): Promise<void> | void =>
-    forwardAcpFrame(this.#client, frame);
+    forwardAcpFrame(this.#client, this.#effects, frame);
 
   override async onDeactivate(): Promise<void> {
     invalidateAllCodeAgentModels();

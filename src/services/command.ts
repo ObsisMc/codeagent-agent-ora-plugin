@@ -17,19 +17,26 @@ export const BIN_ENV_VAR = "ORA_CODEAGENT_BIN";
 /**
  * Names the PATH spellings that can launch CodeAgent, in the order they should be tried.
  *
- * Windows gets four because installers disagree on what they put there — a native
- * `codeagent.exe`, the `codeagent.cmd` shim npm and bun write, a `codeagent.bat` wrapper, or an
+ * Windows gets four because installers disagree on what they put there — a `codeagent.bat`
+ * wrapper, a native `codeagent.exe`, the `codeagent.cmd` shim npm and bun write, or an
  * extensionless launcher — and the host's PATH lookup appends `.exe` to a bare name rather than
  * trying the others, so a plugin naming only the bare command finds nothing on a machine that has
- * the CLI. The order follows Windows' own `PATHEXT` precedence, which puts `.exe` first: the
- * process the host ends up holding is then the CLI itself rather than a shell wrapper around it.
+ * the CLI.
+ *
+ * `.bat` leads deliberately, against Windows' own `PATHEXT` precedence. CodeAgent is distributed
+ * as a batch wrapper, so that is the spelling a real install answers to and putting it first means
+ * discovery costs one host round trip instead of three misses before it. The tradeoff is real: on
+ * a machine carrying both a wrapper and a native binary the host ends up holding `cmd.exe` rather
+ * than the CLI, which is why `stop()` closes stdin before killing and why the host's kill is
+ * tree-wide. A user who has a native binary and wants it held directly names it with
+ * `ORA_CODEAGENT_BIN`.
  */
 export function resolveCodeAgentCommands(): string[] {
   return Deno.build.os === "windows"
     ? [
+      `${BINARY_NAME}.bat`,
       `${BINARY_NAME}.exe`,
       `${BINARY_NAME}.cmd`,
-      `${BINARY_NAME}.bat`,
       BINARY_NAME,
     ]
     : [BINARY_NAME];
